@@ -1,18 +1,26 @@
 #!/bin/bash
 
+# Description:
+# This script generates a dependency tree for a given ELF file, visualizing library dependencies
+# in a Graphviz .dot file. Nodes represent libraries with rounded rectangle shapes, bold black
+# borders, and group-based background colors, showing the total number of exported functions.
+# Edges indicate dependencies with labels showing the number of potentially called functions.
+# Edges between same-group modules are bold and black; edges with zero called functions are dashed.
+# All text and borders are black, edges (except same-group edges) are dark grey. The output .dot file and
+# optional PNG image can be customized via command-line arguments.
+
 # Check arguments
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <ELF_file_path> [--depth <depth>] [--group <path>] [--output <dot_file>] [--image <image_file>] [--generate] [--help]" >&2
+    echo "Usage: $0 <ELF_file_path> [--depth <depth>] [--group <path>] [--output <dot_file>] [--image <image_file>] [--help]" >&2
     exit 1
 fi
 
 # Initialize variables
-GENERATE_IMAGE=0
 ELF_FILE="$1"
 MAX_DEPTH=999
 RGROUPS=()
 DOT_FILE="deps.dot"
-IMAGE_FILE="deps.png"
+IMAGE_FILE=""
 COLORS=("red" "blue" "green" "purple" "orange" "cyan" "pink" "yellow" "brown" "gray" "magenta" "lime" "teal" "indigo" "violet" "maroon")
 GROUP_COLORS=()
 DECLARED_NODES=()
@@ -56,19 +64,18 @@ while [ $# -gt 0 ]; do
         fi
         IMAGE_FILE="$2"
         shift 2
-    elif [ "$1" = "--generate" ]; then
-        GENERATE_IMAGE=1
-        shift
     elif [ "$1" = "--help" ]; then
-        echo "Usage: $0 <ELF_file_path> [--depth <depth>] [--group <path>] [--output <dot_file>] [--image <image_file>] [--generate] [--help]"
+        echo "Usage: $0 <ELF_file_path> [--depth <depth>] [--group <path>] [--output <dot_file>] [--image <image_file>] [--help]"
         echo "  <ELF_file_path>      Path to the executable ELF file or library"
         echo "  --depth <depth>      Set maximum dependency depth (default: 999)"
-        echo "  --group <path>       Specify a path group for coloring (e.g., /usr/lib/)"
+        echo "  --group <path>       Specify a path group for background color (e.g., /usr/lib/)"
         echo "  --output <dot_file>  Specify output .dot file (default: deps.dot)"
-        echo "  --image <image_file> Specify output image file (default: deps.png)"
-        echo "  --generate           Automatically generate PNG image"
+        echo "  --image <image_file> Generate PNG image at specified path"
         echo "  --help               Show this help message"
-        echo "Outputs dependency tree to the specified .dot file and console, with group-based colors, function counts in nodes, and called functions on edges."
+        echo "Outputs dependency tree to the specified .dot file and console, with group-based background colors,"
+        echo "function counts in nodes, and called functions on edges. Nodes are rounded rectangles with bold black borders."
+        echo "Edges between same-group modules are bold and black; edges with zero called functions are dashed."
+        echo "All text and borders are black, edges (except same-group edges) are dark grey."
         exit 0
     else
         echo "Unknown argument: $1" >&2
@@ -168,11 +175,11 @@ function get_group {
     echo "-1"
 }
 
-# Function to get node color
-function get_color {
+# Function to get node background color
+function get_bg_color {
     local group_idx="$1"
     if [ "$group_idx" -eq -1 ]; then
-        echo "black"
+        echo "white"
     else
         echo "${GROUP_COLORS[$group_idx]}"
     fi
@@ -190,33 +197,44 @@ function print_deps {
     local file_name=$(basename "$file")
     local node_name=$(echo "$file_name" | sed 's/[^a-zA-Z0-9.]/_/g')
     local group_idx=$(get_group "$file")
-    local color=$(get_color "$group_idx")
+    local bg_color=$(get_bg_color "$group_idx")
     local group_name="None"
     if [ "$group_idx" -ne -1 ]; then
         group_name="${RGROUPS[$group_idx]}"
     fi
     local func_count=$(count_functions "$file")
     if [[ ! " ${DECLARED_NODES[@]} " =~ " ${node_name} " ]]; then
-        # Add full path and function count to node label
+        # Add node with rounded rectangle, bold border, and group-based background
         if [ "$func_count" -gt 0 ]; then
-            echo "    \"$node_name\" [label=\"${file_name}\\n${file}\\n${func_count} functions\", color=\"$color\", fontcolor=\"$color\", fontsize=8];" >> "$DOT_FILE"
+            echo "    \"$node_name\" [label=\"${file_name}\\n${file}\\n${func_count} functions\", shape=box, style=\"rounded,filled\", fillcolor=\"$bg_color\", color=black, fontcolor=black, penwidth=2, fontsize=8];" >> "$DOT_FILE"
         else
-            echo "    \"$node_name\" [label=\"${file_name}\\n${file}\\nNo functions found\", color=\"$color\", fontcolor=\"$color\", fontsize=8];" >> "$DOT_FILE"
+            echo "    \"$node_name\" [label=\"${file_name}\\n${file}\\nNo functions found\", shape=box, style=\"rounded,filled\", fillcolor=\"$bg_color\", color=black, fontcolor=black, penwidth=2, fontsize=8];" >> "$DOT_FILE"
             echo "${indent}  [WARN] Could not count functions for $file_name" >&2
         fi
         DECLARED_NODES+=("$node_name")
     fi
     if [ -n "$parent" ]; then
         local parent_name=$(basename "$parent" | sed 's/[^a-zA-Z0-9.]/_/g')
+        local parent_group_idx=$(get_group "$parent")
         local called_count=$(count_called_functions "$parent" "$file")
-        if [ "$called_count" -gt 0 ]; then
-            echo "    \"$parent_name\" -> \"$node_name\" [label=\"$called_count called\", fontsize=8];" >> "$DOT_FILE"
-        else
-            echo "    \"$parent_name\" -> \"$node_name\" [label=\"0 called\", fontsize=8];" >> "$DOT_FILE"
-            echo "${indent}  [WARN] Could not count called functions for $file_name from $parent" >&2
+        local edge_style="solid"
+        local edge_color="darkgrey"
+        local edge_width="1"
+        local label_color="darkgrey"
+        if [ "$called_count" -eq 0 ]; then
+            edge_style="dashed"
+        fi
+        if [ "$group_idx" -eq "$parent_group_idx" ] && [ "$group_idx" -ne -1 ]; then
+            edge_color="black"
+            edge_width="2"
+            label_color="black"
+        fi
+        echo "    \"$parent_name\" -> \"$node_name\" [label=\"$called_count called\", style=\"$edge_style\", color=\"$edge_color\", penwidth=\"$edge_width\", fontcolor=\"$label_color\", fontsize=8];" >> "$DOT_FILE"
+        if [ "$called_count" -eq 0 ] && [ "$edge_style" = "dashed" ]; then
+            echo "${indent}  [WARN] No called functions detected for $file_name from $parent" >&2
         fi
     fi
-    echo "${indent}${file_name} (color: $color, group: $group_name, path: $file, functions: $func_count)"
+    echo "${indent}${file_name} (bg_color: $bg_color, group: $group_name, path: $file, functions: $func_count)"
     local deps=$(readelf -d "$file" 2>/dev/null | grep NEEDED | awk '{print $5}' | sed 's/\[//;s/\]//')
     for dep in $deps; do
         local dep_path=$(find_lib_path "$dep")
@@ -242,8 +260,8 @@ echo "}" >> "$DOT_FILE"
 
 echo "File $DOT_FILE successfully created."
 
-# Generate image if --generate is specified
-if [ $GENERATE_IMAGE -eq 1 ]; then
+# Generate image if --image is specified
+if [ -n "$IMAGE_FILE" ]; then
     if command -v dot >/dev/null 2>&1; then
         dot -Tpng "$DOT_FILE" -o "$IMAGE_FILE"
         if [ $? -eq 0 ]; then
@@ -255,5 +273,5 @@ if [ $GENERATE_IMAGE -eq 1 ]; then
         echo "Error: dot command not found. Install Graphviz to generate the image." >&2
     fi
 else
-    echo "To visualize, use: dot -Tpng $DOT_FILE -o $IMAGE_FILE"
+    echo "To visualize, use: dot -Tpng $DOT_FILE -o output.png"
 fi
