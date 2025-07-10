@@ -2,6 +2,10 @@
 
 This Bash script generates a dependency tree for a given ELF (Executable and Linkable Format) file, such as an executable or shared library, and visualizes it using Graphviz. The output is a `.dot` file describing the dependency graph, with optional PNG image generation. The script provides detailed information about libraries, including the number of exported functions and potentially called functions between dependencies.
 
+## Screenshot
+
+["Visualized elf dependency tree"](./screenshot.png)
+
 ## Features
 - **Dependency Tree**: Builds a tree of library dependencies using `readelf` to extract `NEEDED` entries.
 - **Function Counting**: Counts exported functions in each library using `nm -D` (symbols of type `T`).
